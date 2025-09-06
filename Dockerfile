@@ -4,23 +4,26 @@ FROM debian:${DEBIAN_VERSION} AS source
 
 # PHP version to build
 # Ref: https://www.php.net/releases/
-# ARG PHP_VERSION=5.6.40
+# Last 5.6 version: 5.6.40
+# Last 5.4 version: 5.4.45
+ARG PHP_INSTALL_DIR=/usr/local/php
 ARG PHP_VERSION=5.4.45
 ARG PHP_DOWNLOAD_URL=https://www.php.net/distributions/php-${PHP_VERSION}.tar.gz
-ARG PHP_BUILD_ARGS="--with-openssl --with-ldap --with-gd --enable-mbstring --enable-bcmath \
-    -with-mssql --with-pdo-pgsql --with-pgsql --with-zlib --with-bz2 --enable-calendar \
-    --enable-exif --enable-ftp --enable-sysvsem --enable-sysvshm --enable-sysvmsg \
-    --enable-wddx --enable-zip --with-jpeg-dir=/usr --with-png-dir=/usr --with-iconv \
-    --with-mhash --enable-sockets --with-pdo-dblib --with-gettext --with-xsl \
-    --enable-shmop --with-gmp --with-xpm-dir --with-curl"
+ARG PHP_TAR_HASH=25bc4723955f4e352935258002af14a14a9810b491a19400d76fcdfa9d04b28f
+
 ARG PHP_APACHE_BUILD_ARGS="--with-apxs2"
 ARG PHP_FPM_BUILD_ARGS="--enable-fpm"
+
+ARG PHP PECL_OCI8_VERSION=2.0.12
+ARG PHP PECL_XDEBUG_VERSION=2.4.1
 
 # latest of 1.0.2 series
 # Ref: https://openssl-library.org/source/old/1.0.2/
 ARG OPENSSL_VERSION=1.0.2u 
 ARG OPENSSL_DOWNLOAD_URL=https://github.com/openssl/openssl/releases/download/OpenSSL_1_0_2u/openssl-1.0.2u.tar.gz
-ARG OPENSSL_BUILD_ARGS="-fPIC shared --prefix=/usr/local/ssl --openssldir=/usr/local/ssl/openssl"
+ARG OPENSSL_TAR_HASH=ecd0c6ffb493dd06707d38b14bb4d8c2288bb7033735606569d8f90f89669d16
+
+ARG OPENSSL_BUILD_ARGS="-fPIC shared --prefix=${PHP_INSTALL_DIR} --openssldir=${PHP_INSTALL_DIR}/openssl"
 
 # Oracle Instant Client
 ARG ORACLE_CLIENT_PATH="/opt/instantclient_11_2"
@@ -38,7 +41,10 @@ RUN apt-get -y update && \
         ca-certificates \
         git \
         wget \
+        less \
+        vim \
         apache2 \
+        sendmail \
         build-essential \
         autoconf \
         libtool \
@@ -52,8 +58,8 @@ RUN apt-get -y update && \
         libgd-dev \
         libgmp-dev \
         libldap2-dev \
-        # libmcrypt-dev \
-        # libtidy-dev \
+        libmcrypt-dev \
+        libtidy-dev \
         libxml2-dev \
         libxslt1-dev \
         # from pgdg
@@ -64,14 +70,10 @@ RUN apt-get -y update && \
     ln -s $(find /usr/include -name gmp.h -print -quit) /usr/include/gmp.h && \
     # fix curl include
     ln -s $(find /usr/include -name curl -type d -print -quit) /usr/include/curl 
-    # && \
-    # # fix freetype include
-    # ln -s $(find /usr/include -name ft2build.h -print -quit) /usr/include/ft2build.h && \
-    # ln -s $(find /usr/include -name freetype -type d -print -quit) /usr/include/freetype && \
-    # echo "#!/bin/bash\npkg-config freetype2 $@\n" > /usr/local/bin/freetype-config
 
 # Build OpenSSL
 RUN wget ${OPENSSL_DOWNLOAD_URL} && \
+    echo "${OPENSSL_TAR_HASH}  openssl-${OPENSSL_VERSION}.tar.gz" | sha256sum -c - && \
     tar -xvzf openssl-${OPENSSL_VERSION}.tar.gz && \
     ( \
         cd openssl-${OPENSSL_VERSION} && \
@@ -81,28 +83,59 @@ RUN wget ${OPENSSL_DOWNLOAD_URL} && \
 
 # PHP Source
 # --with-freetype-dir -> falhando
-ENV PATH=/usr/local/ssl/bin:${PATH} \
-    PKG_CONFIG_PATH=/usr/local/ssl/lib/pkgconfig
-
-# COPY ./legacy/php /usr/local/php/etc
+ENV PATH=${PHP_INSTALL_DIR}/bin:${PATH} \
+    PKG_CONFIG_PATH=${PHP_INSTALL_DIR}/lib/pkgconfig   
 
 RUN wget ${PHP_DOWNLOAD_URL} && \
-    tar -xvzf php-${PHP_VERSION}.tar.gz && \
+    echo "${PHP_TAR_HASH}  php-${PHP_VERSION}.tar.gz" | sha256sum -c - && \
+    tar -xzf php-${PHP_VERSION}.tar.gz && \
     ( \
         cd php-${PHP_VERSION} && \
-        mkdir -p /usr/local/php/etc/php.d && \
+        mkdir -p ${PHP_INSTALL_DIR}/etc/php.d && \
         ./configure \
-            --prefix=/usr/local/php \
+            --prefix=${PHP_INSTALL_DIR} \
             --with-libdir=lib/x86_64-linux-gnu \
-            --with-config-file-path=/usr/local/php/etc \
-            --with-config-file-scan-dir=/usr/local/php/etc/php.d \
+            --with-config-file-path=/etc/php \
+            --with-config-file-scan-dir=/etc/php/modules/enabled \
+            --disable-short-tags \
+            --disable-cgi \
+            # extensions
+            --with-bz2=shared \
+            --with-curl=shared \
+            --with-iconv=shared \
+            --with-gd=shared \
+            --with-gettext \
+            --with-gmp=shared \
+            --with-jpeg-dir=/usr \
+            --with-ldap=shared \
+            --with-openssl \
+            --with-png-dir=/usr \
+            --with-mhash \
+            --with-mssql=shared \
+            --with-pdo-dblib=shared \
+            --with-pdo-pgsql=shared \
+            --with-pgsql=shared \
+            --with-tidy=shared \
+            --with-xpm-dir \
+            --with-xmlrpc=shared \
+            --with-xsl=shared \
+            --with-zlib=shared \
+            --enable-bcmath=shared \ 
+            --enable-calendar=shared \
+            --enable-exif=shared \
+            --enable-ftp=shared \
+            --enable-mbstring=shared \
+            --enable-shmop=shared \
+            --enable-sockets=shared \
+            --enable-sysvsem=shared \
+            --enable-sysvshm=shared \
+            --enable-sysvmsg=shared \
+            --enable-wddx=shared \
+            --enable-zip=shared \
             ${PHP_APACHE_BUILD_ARGS} \
-            ${PHP_FPM_BUILD_ARGS} \
-            ${PHP_BUILD_ARGS} && \
+            ${PHP_FPM_BUILD_ARGS} && \
         make && make install \
     )
-
-ENV PATH=/usr/local/php/bin:${PATH} 
 
 # Oracle
 # https://forums.oracle.com/ords/apexds/post/ldap-and-oci8-doesnot-work-together-4823
@@ -116,17 +149,27 @@ RUN tar -zxf instantclient-basic-linux.x64-11.2.0.4.0.tar.gz -C /opt && \
     echo ${ORACLE_CLIENT_PATH} > /etc/ld.so.conf.d/instantclient.conf && \
     ldconfig
 
-
 # Oracle PHP extension
-RUN wget https://pecl.php.net/get/oci8-2.0.12.tgz && \
-    tar -xvzf oci8-2.0.12.tgz && \
+RUN wget https://pecl.php.net/get/oci8-${PECL_OCI8_VERSION}.tgz && \
+    tar -xzf oci8-${PECL_OCI8_VERSION}.tgz && \
     ( \
-        cd oci8-2.0.12 && \
-        /usr/local/php/bin/phpize && \
+        cd oci8-${PECL_OCI8_VERSION} && \
+        phpize && \
         ./configure --with-oci8=shared,instantclient,/opt/instantclient_11_2 && \
         make && make install \
-    ) && \
-    echo "extension=oci8.so" > /usr/local/php/etc/php.d/oci8.ini
+    )
+
+# XDebug
+# https://pecl.php.net/package/xdebug
+# https://xdebug.org/docs/compat
+RUN wget https://pecl.php.net/get/xdebug-${PECL_XDEBUG_VERSION}.tgz && \
+    tar -xzf xdebug-${PECL_XDEBUG_VERSION}.tgz && \
+    ( \
+        cd xdebug-${PECL_XDEBUG_VERSION} && \
+        phpize && \
+        ./configure --enable-xdebug && \
+        make && make install \
+    )
 
 WORKDIR /etc/apache2
 
@@ -138,10 +181,11 @@ RUN a2dismod mpm_event mpm_worker && \
     sed -i 's/80/8080/g' ports.conf && \
     sed -i 's/443/8443/g' ports.conf && \
     sed -i 's/80/8080/g' sites-enabled/000-default.conf && \
+    # enable php on virtualhost
     sed -i '/<\/VirtualHost>/i \    <FilesMatch \\.php$>\n        SetHandler application/x-httpd-php\n    </FilesMatch>' \
         sites-enabled/000-default.conf
 
-EXPOSE 8080 8443
+EXPOSE 8080 8443 9000
 
 # Enable apache to run in foreground
 CMD ["apache2ctl", "-D", "FOREGROUND"]
