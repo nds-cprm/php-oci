@@ -25,8 +25,9 @@ ARG OPENSSL_TAR_HASH=ecd0c6ffb493dd06707d38b14bb4d8c2288bb7033735606569d8f90f896
 
 ARG OPENSSL_BUILD_ARGS="-fPIC shared --prefix=${PHP_INSTALL_DIR} --openssldir=${PHP_INSTALL_DIR}/openssl"
 
-# Oracle Instant Client
-ARG ORACLE_CLIENT_PATH="/opt/instantclient_11_2"
+# Oracle
+ARG ORACLE_CLIENT_DOWNLOAD_URL=https://download.oracle.com/otn_software/linux/instantclient/1928000/instantclient-basiclite-linux.x64-19.28.0.0.0dbru.zip
+ARG ORACLE_CLIENT_SDK_DOWNLOAD_URL=https://download.oracle.com/otn_software/linux/instantclient/1928000/instantclient-sdk-linux.x64-19.28.0.0.0dbru.zip
 
 WORKDIR /tmp
 
@@ -41,6 +42,7 @@ RUN apt-get -y update && \
         ca-certificates \
         git \
         wget \
+        unzip \
         less \
         vim \
         apache2 \
@@ -72,7 +74,7 @@ RUN apt-get -y update && \
     ln -s $(find /usr/include -name curl -type d -print -quit) /usr/include/curl 
 
 # Build OpenSSL
-RUN wget ${OPENSSL_DOWNLOAD_URL} && \
+RUN wget -nv ${OPENSSL_DOWNLOAD_URL} && \
     echo "${OPENSSL_TAR_HASH}  openssl-${OPENSSL_VERSION}.tar.gz" | sha256sum -c - && \
     tar -xvzf openssl-${OPENSSL_VERSION}.tar.gz && \
     ( \
@@ -86,7 +88,7 @@ RUN wget ${OPENSSL_DOWNLOAD_URL} && \
 ENV PATH=${PHP_INSTALL_DIR}/bin:${PATH} \
     PKG_CONFIG_PATH=${PHP_INSTALL_DIR}/lib/pkgconfig   
 
-RUN wget ${PHP_DOWNLOAD_URL} && \
+RUN wget -nv ${PHP_DOWNLOAD_URL} && \
     echo "${PHP_TAR_HASH}  php-${PHP_VERSION}.tar.gz" | sha256sum -c - && \
     tar -xzf php-${PHP_VERSION}.tar.gz && \
     ( \
@@ -138,31 +140,28 @@ RUN wget ${PHP_DOWNLOAD_URL} && \
     )
 
 # Oracle
-# https://forums.oracle.com/ords/apexds/post/ldap-and-oci8-doesnot-work-together-4823
-COPY oracle/instantclient-basic-linux.x64-11.2.0.4.0.tar.gz .
-COPY oracle/instantclient-sdk-linux.x64-11.2.0.4.0.tar.gz .
-
-RUN tar -zxf instantclient-basic-linux.x64-11.2.0.4.0.tar.gz -C /opt && \
-    tar -zxf instantclient-sdk-linux.x64-11.2.0.4.0.tar.gz -C /opt && \
-    ln -s ${ORACLE_CLIENT_PATH}/libclntsh.so.11.1 ${ORACLE_CLIENT_PATH}/libclntsh.so && \
-    ln -s ${ORACLE_CLIENT_PATH}/libocci.so.11.1 ${ORACLE_CLIENT_PATH}/libocci.so && \
-    echo ${ORACLE_CLIENT_PATH} > /etc/ld.so.conf.d/instantclient.conf && \
-    ldconfig
-
-# Oracle PHP extension
-RUN wget https://pecl.php.net/get/oci8-${PECL_OCI8_VERSION}.tgz && \
+# Prefer PECL https://forums.oracle.com/ords/apexds/post/ldap-and-oci8-doesnot-work-together-4823
+RUN set -xe && wget -qO instantclient.zip ${ORACLE_CLIENT_DOWNLOAD_URL} && \
+    wget -qO instantclient-sdk.zip ${ORACLE_CLIENT_SDK_DOWNLOAD_URL} && \
+    unzip instantclient.zip -d /opt && \
+    unzip -o instantclient-sdk.zip -d /opt && \
+    INSTANTCLIENT_DIR=$(find /opt -name 'instantclient*' -print -quit) && \
+    echo $INSTANTCLIENT_DIR > /etc/ld.so.conf.d/oracle.conf && \
+    ldconfig && \
+    # Oracle PHP extension
+    wget -nv https://pecl.php.net/get/oci8-${PECL_OCI8_VERSION}.tgz && \
     tar -xzf oci8-${PECL_OCI8_VERSION}.tgz && \
     ( \
         cd oci8-${PECL_OCI8_VERSION} && \
         phpize && \
-        ./configure --with-oci8=shared,instantclient,/opt/instantclient_11_2 && \
+        ./configure --with-oci8=shared,instantclient,$INSTANTCLIENT_DIR && \
         make && make install \
     )
 
 # XDebug
 # https://pecl.php.net/package/xdebug
 # https://xdebug.org/docs/compat
-RUN wget https://pecl.php.net/get/xdebug-${PECL_XDEBUG_VERSION}.tgz && \
+RUN wget -nv https://pecl.php.net/get/xdebug-${PECL_XDEBUG_VERSION}.tgz && \
     tar -xzf xdebug-${PECL_XDEBUG_VERSION}.tgz && \
     ( \
         cd xdebug-${PECL_XDEBUG_VERSION} && \
