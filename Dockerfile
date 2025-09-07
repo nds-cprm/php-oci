@@ -160,10 +160,10 @@ RUN set -xe && wget -qO instantclient.zip ${ORACLE_CLIENT_DOWNLOAD_URL} && \
 # XDebug
 # https://pecl.php.net/package/xdebug
 # https://xdebug.org/docs/compat
-RUN wget -nv https://pecl.php.net/get/xdebug-${PECL_XDEBUG_VERSION}.tgz && \
-    tar -xzf xdebug-${PECL_XDEBUG_VERSION}.tgz && \
+RUN wget -nv https://pecl.php.net/get/xdebug-${PHP_PECL_XDEBUG_VERSION}.tgz && \
+    tar -xzf xdebug-${PHP_PECL_XDEBUG_VERSION}.tgz && \
     ( \
-        cd xdebug-${PECL_XDEBUG_VERSION} && \
+        cd xdebug-${PHP_PECL_XDEBUG_VERSION} && \
         phpize && \
         ./configure --enable-xdebug && \
         make && make install \
