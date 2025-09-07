@@ -14,8 +14,7 @@ ARG PHP_TAR_HASH=25bc4723955f4e352935258002af14a14a9810b491a19400d76fcdfa9d04b28
 ARG PHP_APACHE_BUILD_ARGS="--with-apxs2"
 ARG PHP_FPM_BUILD_ARGS="--enable-fpm"
 
-ARG PHP PECL_OCI8_VERSION=2.0.12
-ARG PHP PECL_XDEBUG_VERSION=2.4.1
+ARG PHP_PECL_XDEBUG_VERSION=2.4.1
 
 # latest of 1.0.2 series
 # Ref: https://openssl-library.org/source/old/1.0.2/
@@ -149,10 +148,10 @@ RUN set -xe && wget -qO instantclient.zip ${ORACLE_CLIENT_DOWNLOAD_URL} && \
     echo $INSTANTCLIENT_DIR > /etc/ld.so.conf.d/oracle.conf && \
     ldconfig && \
     # Oracle PHP extension
-    wget -nv https://pecl.php.net/get/oci8-${PECL_OCI8_VERSION}.tgz && \
-    tar -xzf oci8-${PECL_OCI8_VERSION}.tgz && \
+    wget -nv https://pecl.php.net/get/oci8-2.0.12.tgz && \
+    tar -xzf oci8-2.0.12.tgz && \
     ( \
-        cd oci8-${PECL_OCI8_VERSION} && \
+        cd oci8-2.0.12 && \
         phpize && \
         ./configure --with-oci8=shared,instantclient,$INSTANTCLIENT_DIR && \
         make && make install \
