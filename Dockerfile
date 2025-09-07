@@ -170,6 +170,17 @@ RUN wget -nv https://pecl.php.net/get/xdebug-${PECL_XDEBUG_VERSION}.tgz && \
         make && make install \
     )
 
+# Suhosin
+# https://suhosin.org/
+RUN wget -nv https://download.suhosin.org/suhosin-0.9.38.tar.gz && \
+    tar -xzf suhosin-0.9.38.tar.gz && \
+    ( \
+        cd suhosin-0.9.38 && \
+        phpize && \
+        ./configure && \
+        make && make install \
+    )
+
 WORKDIR /etc/apache2
 
 # Apache (for tests only)
