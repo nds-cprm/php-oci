@@ -185,7 +185,11 @@ WORKDIR /etc/apache2
 # Apache (for tests only)
 RUN a2dismod mpm_event mpm_worker && \
     a2enmod mpm_prefork && \
+    # grant to root group write permissions
+    mkdir -p /var/run/apache2 /var/lock/apache2 /var/log/apache2 && \
+    chown -R root:root /var/log/apache2 && \
     echo "<?php phpinfo(); ?>" > /var/www/html/index.php && \
+    chmod -R g=u /var/run/apache2 /var/lock/apache2 /var/log/apache2 /var/www/html && \
     # change default ports
     sed -i 's/80/8080/g' ports.conf && \
     sed -i 's/443/8443/g' ports.conf && \
