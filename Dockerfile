@@ -180,6 +180,9 @@ RUN wget -nv https://download.suhosin.org/suhosin-0.9.38.tar.gz && \
         make && make install \
     )
 
+# copy configs
+COPY conf/release /etc/php
+
 WORKDIR /etc/apache2
 
 # Apache (for tests only)
