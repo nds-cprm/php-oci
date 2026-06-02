@@ -1,4 +1,5 @@
 ARG DEBIAN_VERSION=bullseye
+ARG PHP_INSTALL_DIR=/usr/local/php
 
 FROM debian:${DEBIAN_VERSION} AS source
 
@@ -6,7 +7,7 @@ FROM debian:${DEBIAN_VERSION} AS source
 # Ref: https://www.php.net/releases/
 # Last 5.6 version: 5.6.40
 # Last 5.4 version: 5.4.45
-ARG PHP_INSTALL_DIR=/usr/local/php
+ARG PHP_INSTALL_DIR
 ARG PHP_VERSION=5.4.45
 ARG PHP_DOWNLOAD_URL=https://www.php.net/distributions/php-${PHP_VERSION}.tar.gz
 ARG PHP_TAR_HASH=25bc4723955f4e352935258002af14a14a9810b491a19400d76fcdfa9d04b28f
@@ -183,15 +184,70 @@ RUN wget -nv https://download.suhosin.org/suhosin-0.9.38.tar.gz && \
 # copy configs
 COPY conf/release /etc/php
 
+
+# Release common
+FROM debian:${DEBIAN_VERSION}-slim AS release-common
+
+ARG PHP_INSTALL_DIR
+ARG DEBIAN_VERSION
+
+COPY --from=source ${PHP_INSTALL_DIR} ${PHP_INSTALL_DIR}
+COPY --from=source /etc/php /etc/php
+COPY --from=source /etc/ld.so.conf.d /etc/ld.so.conf.d22
+COPY --from=source /opt /opt
+
+ENV PATH=${PHP_INSTALL_DIR}/bin:${PATH}
+
+RUN apt-get -y update && \
+    # install pgdg repo
+    apt-get install -y --no-install-recommends --no-install-suggests \
+        postgresql-common \
+        gnupg && \
+    YES=yes && . /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh && \
+    # install libraries and tools
+    apt-get install -y --no-install-recommends --no-install-suggests \
+        ca-certificates \
+        # apache2 \
+        sendmail \
+        # Oracle
+        libaio1 \
+        # from pgdg
+        libpq5 \
+        # PHP deps
+        freetds-bin \ 
+        libbz2-1.0 \
+        libcurl3-nss \
+        libgd3 \
+        libgmp10 \
+        libldap-2.* \
+        libmcrypt4 \
+        libtidy5deb1 \
+        libxml2 \
+        libxslt1.1 && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* && \
+    ldconfig 
+
+
+FROM release-common AS release-httpd
+
+COPY --from=source /usr/lib/apache2/modules/libphp5.so /usr/lib/apache2/modules/
+COPY --from=source /etc/apache2/mods-available/php5.load  /etc/apache2/mods-available/
+COPY --from=source /etc/apache2/mods-enabled/php5.load  /etc/apache2/mods-enabled/
+
+RUN apt-get -y update && \
+    apt-get install -y --no-install-recommends --no-install-suggests \
+        apache2 && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
 WORKDIR /etc/apache2
 
-# Apache (for tests only)
 RUN a2dismod mpm_event mpm_worker && \
     a2enmod mpm_prefork && \
     # grant to root group write permissions
     mkdir -p /var/run/apache2/socks /var/lock/apache2 /var/log/apache2 && \
     chown -R root:root /var/log/apache2 && \
-    echo "<?php phpinfo(); ?>" > /var/www/html/phpinfo.php && \
     chmod -R g=u /var/run/apache2 /var/lock/apache2 /var/log/apache2 /var/www/html && \
     # change default ports
     sed -i 's/80/8080/g' ports.conf && \
@@ -203,5 +259,58 @@ RUN a2dismod mpm_event mpm_worker && \
 
 EXPOSE 8080 8443 9000
 
+STOPSIGNAL SIGQUIT
+
 # Enable apache to run in foreground
 CMD ["apache2ctl", "-D", "FOREGROUND"]
+
+
+FROM release-common AS release-nginx
+
+RUN apt-get -y update && \
+    apt-get install -y --no-install-recommends --no-install-suggests \
+        nginx && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY flavours/nginx/docker-entrypoint.sh /usr/local/bin/
+COPY flavours/nginx/conf/default.conf /etc/nginx/sites-available/default
+
+RUN mkdir -p /run/php && \
+    chown -R www-data:root /run/php && \
+    chmod -R g=u /run/php /usr/local/php/var/log && \
+    cp /usr/local/php/etc/php-fpm.conf.default /etc/php/php-fpm.conf && \
+    ln -sf /etc/php/php-fpm.conf /usr/local/php/etc/php-fpm.conf && \
+    sed -i 's/^user.*/user = www-data/g' /etc/php/php-fpm.conf && \
+    sed -i 's/^group.*/group = www-data/g' /etc/php/php-fpm.conf && \
+    sed -i 's|127\.0\.0\.1:9000|/run/php/php-fpm.sock|g' /etc/php/php-fpm.conf && \
+    chmod +x /usr/local/bin/docker-entrypoint.sh && \
+    ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
+
+# Set nginx to run as non-privileged user
+# https://github.com/nginx/docker-nginx-unprivileged/blob/70e79be19cbe83092ed6c86f461967fe44012674/Dockerfile-debian.template#L128
+RUN sed -i '/user www-data;/d' /etc/nginx/nginx.conf && \
+    sed -i 's|error_log \/var\/log\/nginx\/error.log;|error_log /dev/stderr;|g' /etc/nginx/nginx.conf && \
+    sed -i 's|access_log \/var\/log\/nginx\/access.log;|access_log /dev/stdout;|g' /etc/nginx/nginx.conf && \
+    sed -i '/user www-data;/d' /etc/nginx/nginx.conf && \
+    sed -i 's,\(/var\)\{0\,1\}/run/nginx.pid,/tmp/nginx.pid,' /etc/nginx/nginx.conf && \
+    sed -i "/^http {/a \    proxy_temp_path /tmp/proxy_temp;\n    client_body_temp_path /tmp/client_temp;\n    fastcgi_temp_path /tmp/fastcgi_temp;\n    uwsgi_temp_path /tmp/uwsgi_temp;\n    scgi_temp_path /tmp/scgi_temp;\n" /etc/nginx/nginx.conf && \
+    sed -i 's,PIDFILE=${PIDFILE:-/run/nginx.pid},PIDFILE=${PIDFILE:-/tmp/nginx.pid},' /etc/init.d/nginx && \
+    # nginx user must own the cache and etc directory to write cache and tweak the nginx config
+    # chown -R 33:0 /var/cache/nginx \
+    # chmod -R g+w /var/cache/nginx \
+    chown -R 33:0 /etc/nginx && \
+    chmod -R g+w /etc/nginx 
+
+ENV PATH=${PHP_INSTALL_DIR}/sbin:${PATH}
+
+WORKDIR /etc/nginx
+
+STOPSIGNAL SIGQUIT
+
+EXPOSE 8080 8443
+
+ENTRYPOINT [ "docker-entrypoint.sh" ]
+
+# Enable nginx to run in foreground
+CMD ["nginx", "-g", "daemon off;"]
