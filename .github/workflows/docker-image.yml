@@ -65,7 +65,7 @@ jobs:
           ${{ env.DOCKER_IMAGE_NAME }}:${{ matrix.php.version }}-${{ matrix.target }}-${{ matrix.distro }}-${{ steps.datetime.outputs.time }}
           ${{ env.DOCKER_IMAGE_NAME }}:${{ matrix.php.version }}-${{ matrix.target }}-${{ matrix.distro }}
           ${{ env.DOCKER_IMAGE_NAME }}:${{ matrix.php.version }}-${{ matrix.target }}
-        cache-from: type=registry,ref=${{ env.DOCKER_IMAGE_NAME }}:${{ matrix.php.version }}-${{ matrix.target }}-${{ matrix.distro }}-${{ steps.datetime.outputs.time }}
+        cache-from: type=registry,ref=${{ env.DOCKER_IMAGE_NAME }}:${{ matrix.php.version }}-${{ matrix.target }}-${{ matrix.distro }}
         cache-to: type=inline
         target: release-${{ matrix.target }}
         
