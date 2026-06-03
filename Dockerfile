@@ -1,4 +1,4 @@
-ARG DEBIAN_VERSION=bullseye
+ARG DEBIAN_VERSION=bookworm
 ARG PHP_INSTALL_DIR=/usr/local/php
 
 FROM debian:${DEBIAN_VERSION} AS source
@@ -8,9 +8,9 @@ FROM debian:${DEBIAN_VERSION} AS source
 # Last 5.6 version: 5.6.40
 # Last 5.4 version: 5.4.45
 ARG PHP_INSTALL_DIR
-ARG PHP_VERSION=5.4.45
+ARG PHP_VERSION=5.6.40
 ARG PHP_DOWNLOAD_URL=https://www.php.net/distributions/php-${PHP_VERSION}.tar.gz
-ARG PHP_TAR_HASH=25bc4723955f4e352935258002af14a14a9810b491a19400d76fcdfa9d04b28f
+ARG PHP_TAR_HASH=56fb9878d12fdd921f6a0897e919f4e980d930160e154cbde2cc6d9206a27cac
 
 ARG PHP_APACHE_BUILD_ARGS="--with-apxs2"
 ARG PHP_FPM_BUILD_ARGS="--enable-fpm"
@@ -236,6 +236,7 @@ COPY --from=source /etc/apache2/mods-available/php5.load  /etc/apache2/mods-avai
 COPY --from=source /etc/apache2/mods-enabled/php5.load  /etc/apache2/mods-enabled/
 
 RUN apt-get -y update && \
+    apt-get -y upgrade && \
     apt-get install -y --no-install-recommends --no-install-suggests \
         apache2 && \
     apt-get clean && \
@@ -268,6 +269,7 @@ CMD ["apache2ctl", "-D", "FOREGROUND"]
 FROM release-common AS release-nginx
 
 RUN apt-get -y update && \
+    apt-get -y upgrade && \
     apt-get install -y --no-install-recommends --no-install-suggests \
         nginx && \
     apt-get clean && \
