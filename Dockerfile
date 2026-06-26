@@ -5,8 +5,8 @@ FROM debian:${DEBIAN_VERSION} AS source
 
 # PHP version to build
 # Ref: https://www.php.net/releases/
-# Last 5.6 version: 5.6.40
-# Last 5.4 version: 5.4.45
+# Last 5.6 version: 5.6.40  sha256: 56fb9878d12fdd921f6a0897e919f4e980d930160e154cbde2cc6d9206a27cac
+# Last 5.4 version: 5.4.45  sha256: 25bc4723955f4e352935258002af14a14a9810b491a19400d76fcdfa9d04b28f
 ARG PHP_INSTALL_DIR
 ARG PHP_VERSION=5.6.40
 ARG PHP_DOWNLOAD_URL=https://www.php.net/distributions/php-${PHP_VERSION}.tar.gz
