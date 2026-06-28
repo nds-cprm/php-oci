@@ -56,7 +56,7 @@ RUN apt-get -y update && \
         apache2-dev \
         freetds-dev \ 
         libbz2-dev \
-        libcurl4-nss-dev \
+        libcurl4-gnutls-dev \
         libgd-dev \
         libgmp-dev \
         libldap2-dev \
