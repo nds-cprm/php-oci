@@ -1,7 +1,8 @@
 ARG DEBIAN_VERSION=bookworm
 ARG PHP_INSTALL_DIR=/usr/local/php
+ARG OSGEO_INSTALL_DIR=/usr/local/osgeo
 
-FROM debian:${DEBIAN_VERSION} AS source
+FROM debian:${DEBIAN_VERSION} AS source-php
 
 # PHP version to build
 # Ref: https://www.php.net/releases/
@@ -146,7 +147,8 @@ RUN set -xe && wget -qO instantclient.zip ${ORACLE_CLIENT_DOWNLOAD_URL} && \
     unzip instantclient.zip -d /opt && \
     unzip -o instantclient-sdk.zip -d /opt && \
     INSTANTCLIENT_DIR=$(find /opt -name 'instantclient*' -print -quit) && \
-    echo $INSTANTCLIENT_DIR > /etc/ld.so.conf.d/oracle.conf && \
+    ln -sf $INSTANTCLIENT_DIR /opt/oracle-client && \
+    echo /opt/oracle-client > /etc/ld.so.conf.d/oracle.conf && \
     ldconfig && \
     # Oracle PHP extension
     wget -nv https://pecl.php.net/get/oci8-2.0.12.tgz && \
@@ -185,16 +187,144 @@ RUN wget -nv https://download.suhosin.org/suhosin-0.9.38.tar.gz && \
 COPY conf/release /etc/php
 
 
-# Release common
-FROM debian:${DEBIAN_VERSION}-slim AS release-common
+#############
+# MapServer #
+#############
+FROM source-php AS source-mapserver
+
+ARG OSGEO_INSTALL_DIR
+
+ENV PATH=${OSGEO_INSTALL_DIR}/bin:${PATH}
+
+RUN echo ${OSGEO_INSTALL_DIR}/lib > /etc/ld.so.conf.d/osgeo.conf 
+
+# GEOS 3.3.x
+ENV CXXFLAGS="-std=c++98" 
+
+ARG GEOS_VERSION=3.3.9
+
+ADD https://download.osgeo.org/geos/geos-${GEOS_VERSION}.tar.bz2 .
+
+# enable php version: configure: WARNING: PHP Unit testing disabled (missing PHP or PHPUNIT)
+RUN tar -jxvf geos-${GEOS_VERSION}.tar.bz2 && \
+    ( \
+        cd geos-${GEOS_VERSION} && \
+        ./configure --prefix=${OSGEO_INSTALL_DIR} && \
+        make && \
+        make install \
+    ) && \
+    ldconfig
+
+# PROJ < 5
+ENV CXXFLAGS="" 
+
+ARG PROJ_VERSION=4.4.9
+
+ADD https://download.osgeo.org/proj/proj-${PROJ_VERSION}.tar.gz .
+
+RUN tar -zxvf proj-${PROJ_VERSION}.tar.gz && \
+    ( \
+        cd proj-${PROJ_VERSION} && \
+        ./configure --prefix=${OSGEO_INSTALL_DIR} && \
+        make && \
+        make install \
+    ) && \
+    ldconfig
+
+# GDAL
+ARG GDAL_VERSION=1.11.5
+
+ADD https://download.osgeo.org/gdal/${GDAL_VERSION}/gdal-${GDAL_VERSION}.tar.gz .
+
+ENV CXXFLAGS="-std=c++11 -fpermissive -Wno-write-strings" \
+    CFLAGS="-fpermissive -Wno-write-strings"
+
+# Oracle libs missing (Create libdir with softlinks?)
+RUN tar -zxvf gdal-${GDAL_VERSION}.tar.gz && \
+    ( \
+        cd gdal-${GDAL_VERSION} && \
+        ./configure --prefix=${OSGEO_INSTALL_DIR} \
+            --with-libtiff=internal \
+            --with-geotiff=internal && \
+        make && \
+        make install \
+    ) && \
+    ldconfig
+
+# libtiff < 4
+# ADD https://download.osgeo.org/libtiff/tiff-3.9.7.tar.gz .
+
+# RUN tar -zxvf tiff-3.9.7.tar.gz && \
+#     ( \
+#         cd tiff-3.9.7 && \
+#         ./configure --prefix=${OSGEO_INSTALL_DIR} && \
+#         make && \
+#         make install \
+#     ) && \
+#     ldconfig
+
+# Mapserver
+ADD https://download.osgeo.org/mapserver/mapserver-5.4.2.tar.gz .
+
+RUN tar -zxvf mapserver-5.4.2.tar.gz && \
+    ( \
+        cd mapserver-5.4.2 && \
+        CFLAGS="$CFLAGS -Dpval=zval -Dfunction_entry=zend_function_entry" && \
+        CXXFLAGS="$CXXFLAGS -Dpval=zval -Dfunction_entry=zend_function_entry" && \
+        ln -s $(find /usr -name libgd.so -print -quit) /usr/lib/libgd.so && \
+        ./configure --prefix=${OSGEO_INSTALL_DIR} \
+            --libdir=/usr/lib/x86_64-linux-gnu \
+            --with-php=/usr/local/php \
+            --with-gd \
+            --enable-point-z-m \
+            --with-zlib \
+            --with-png \
+            --with-jpeg \
+            --with-xpm \
+            --with-pdf \
+            --with-eppl \
+            --with-proj=/usr/local/osgeo \
+            --with-threads \
+            --with-geos \
+            --with-ogr \
+            --with-gdal=/usr/local/osgeo/bin/gdal-config \
+            # --with-tiff \
+            --with-postgis \
+            --with-oraclespatial=/opt/oracle-client \
+            # --with-fastcgi \
+            --with-curl-config \
+            --with-wmsclient \
+            --with-wfsclient && \
+        make && \
+        make install && \
+        # mapscript
+        mkdir -p ${OSGEO_INSTALL_DIR}/lib/php/extensions && \
+        cp -v $(find . -name php_mapscript.so) ${OSGEO_INSTALL_DIR}/lib/php/extensions && \
+        ln -s ${OSGEO_INSTALL_DIR}/lib/php/extensions/php_mapscript.so $(php-config --extension-dir)/php_mapscript.so && \
+        # binaries 
+        echo "extension=php_mapscript.so" > /etc/php/modules/available/mapscript.ini && \
+        cp -v \
+            legend mapserv mapserver-config msencrypt scalebar \
+            shp2img shp2mysql.pl shp2pdf shptree shptreetst shptreevis sortshp tile4ms \
+        ${OSGEO_INSTALL_DIR}/bin \
+    ) && \
+    ldconfig
+
+
+# Release standard
+FROM debian:${DEBIAN_VERSION}-slim AS release-php
 
 ARG PHP_INSTALL_DIR
 ARG DEBIAN_VERSION
 
-COPY --from=source ${PHP_INSTALL_DIR} ${PHP_INSTALL_DIR}
-COPY --from=source /etc/php /etc/php
-COPY --from=source /etc/ld.so.conf.d /etc/ld.so.conf.d22
-COPY --from=source /opt /opt
+COPY --from=source-php ${PHP_INSTALL_DIR} ${PHP_INSTALL_DIR}
+COPY --from=source-php /etc/php /etc/php
+COPY --from=source-php /etc/ld.so.conf.d/oracle.conf /etc/ld.so.conf.d/oracle.conf
+COPY --from=source-php /opt /opt
+COPY --from=source-php /usr/lib/apache2/modules/libphp5.so /usr/lib/apache2/modules/
+COPY --from=source-php /etc/apache2/mods-available/php5.load  /etc/apache2/mods-available/
+COPY --from=source-php /etc/apache2/mods-enabled/php5.load  /etc/apache2/mods-enabled/
+COPY conf/release /etc/php
 
 ENV PATH=${PHP_INSTALL_DIR}/bin:${PATH}
 
@@ -216,7 +346,7 @@ RUN apt-get -y update && \
         # PHP deps
         freetds-bin \ 
         libbz2-1.0 \
-        libcurl3-nss \
+        libcurl3-gnutls \
         libgd3 \
         libgmp10 \
         libldap-2.* \
@@ -229,90 +359,14 @@ RUN apt-get -y update && \
     ldconfig 
 
 
-FROM release-common AS release-httpd
+FROM release-php AS release-mapserver
 
-COPY --from=source /usr/lib/apache2/modules/libphp5.so /usr/lib/apache2/modules/
-COPY --from=source /etc/apache2/mods-available/php5.load  /etc/apache2/mods-available/
-COPY --from=source /etc/apache2/mods-enabled/php5.load  /etc/apache2/mods-enabled/
+ARG OSGEO_INSTALL_DIR
 
-RUN apt-get -y update && \
-    apt-get -y upgrade && \
-    apt-get install -y --no-install-recommends --no-install-suggests \
-        apache2 && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+COPY --from=source-mapserver ${OSGEO_INSTALL_DIR} ${OSGEO_INSTALL_DIR}
+COPY --from=source-mapserver /etc/ld.so.conf.d/osgeo.conf /etc/ld.so.conf.d/osgeo.conf
 
-WORKDIR /etc/apache2
+ENV PATH=${OSGEO_INSTALL_DIR}/bin:${PATH}
 
-RUN a2dismod mpm_event mpm_worker && \
-    a2enmod mpm_prefork && \
-    # grant to root group write permissions
-    mkdir -p /var/run/apache2/socks /var/lock/apache2 /var/log/apache2 && \
-    chown -R root:root /var/log/apache2 && \
-    chmod -R g=u /var/run/apache2 /var/lock/apache2 /var/log/apache2 /var/www/html && \
-    # change default ports
-    sed -i 's/80/8080/g' ports.conf && \
-    sed -i 's/443/8443/g' ports.conf && \
-    sed -i 's/80/8080/g' sites-enabled/000-default.conf && \
-    # enable php on virtualhost
-    sed -i '/<\/VirtualHost>/i \    <FilesMatch \\.php$>\n        SetHandler application/x-httpd-php\n    </FilesMatch>' \
-        sites-enabled/000-default.conf
-
-EXPOSE 8080 8443 9000
-
-STOPSIGNAL SIGQUIT
-
-# Enable apache to run in foreground
-CMD ["apache2ctl", "-D", "FOREGROUND"]
-
-
-FROM release-common AS release-nginx
-
-RUN apt-get -y update && \
-    apt-get -y upgrade && \
-    apt-get install -y --no-install-recommends --no-install-suggests \
-        nginx && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-COPY flavours/nginx/docker-entrypoint.sh /usr/local/bin/
-COPY flavours/nginx/conf/default.conf /etc/nginx/sites-available/default
-
-RUN mkdir -p /run/php && \
-    chown -R www-data:root /run/php && \
-    chmod -R g=u /run/php /usr/local/php/var/log && \
-    cp /usr/local/php/etc/php-fpm.conf.default /etc/php/php-fpm.conf && \
-    ln -sf /etc/php/php-fpm.conf /usr/local/php/etc/php-fpm.conf && \
-    sed -i 's/^user.*/user = www-data/g' /etc/php/php-fpm.conf && \
-    sed -i 's/^group.*/group = www-data/g' /etc/php/php-fpm.conf && \
-    sed -i 's|127\.0\.0\.1:9000|/run/php/php-fpm.sock|g' /etc/php/php-fpm.conf && \
-    chmod +x /usr/local/bin/docker-entrypoint.sh && \
-    ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
-
-# Set nginx to run as non-privileged user
-# https://github.com/nginx/docker-nginx-unprivileged/blob/70e79be19cbe83092ed6c86f461967fe44012674/Dockerfile-debian.template#L128
-RUN sed -i '/user www-data;/d' /etc/nginx/nginx.conf && \
-    sed -i 's|error_log \/var\/log\/nginx\/error.log;|error_log /dev/stderr;|g' /etc/nginx/nginx.conf && \
-    sed -i 's|access_log \/var\/log\/nginx\/access.log;|access_log /dev/stdout;|g' /etc/nginx/nginx.conf && \
-    sed -i '/user www-data;/d' /etc/nginx/nginx.conf && \
-    sed -i 's,\(/var\)\{0\,1\}/run/nginx.pid,/tmp/nginx.pid,' /etc/nginx/nginx.conf && \
-    sed -i "/^http {/a \    proxy_temp_path /tmp/proxy_temp;\n    client_body_temp_path /tmp/client_temp;\n    fastcgi_temp_path /tmp/fastcgi_temp;\n    uwsgi_temp_path /tmp/uwsgi_temp;\n    scgi_temp_path /tmp/scgi_temp;\n" /etc/nginx/nginx.conf && \
-    sed -i 's,PIDFILE=${PIDFILE:-/run/nginx.pid},PIDFILE=${PIDFILE:-/tmp/nginx.pid},' /etc/init.d/nginx && \
-    # nginx user must own the cache and etc directory to write cache and tweak the nginx config
-    # chown -R 33:0 /var/cache/nginx \
-    # chmod -R g+w /var/cache/nginx \
-    chown -R 33:0 /etc/nginx && \
-    chmod -R g+w /etc/nginx 
-
-ENV PATH=${PHP_INSTALL_DIR}/sbin:${PATH}
-
-WORKDIR /etc/nginx
-
-STOPSIGNAL SIGQUIT
-
-EXPOSE 8080 8443
-
-ENTRYPOINT [ "docker-entrypoint.sh" ]
-
-# Enable nginx to run in foreground
-CMD ["nginx", "-g", "daemon off;"]
+RUN cp ${OSGEO_INSTALL_DIR}/lib/php/extensions/php_mapscript.so $(php-config --extension-dir) && \
+    ldconfig
